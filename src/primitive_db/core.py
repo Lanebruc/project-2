@@ -1,4 +1,6 @@
 # src/primitive_db/core.py
+from .utils import load_table_data, save_table_data
+
 
 def create_table(metadata, table_name, columns):
     """
@@ -42,6 +44,9 @@ def create_table(metadata, table_name, columns):
         "data": []  # Будущие данные таблицы
     }
     
+    # Создаем файл для данных таблицы
+    save_table_data(table_name, [])
+    
     print(f"Таблица '{table_name}' успешно создана")
     print(f"Столбцы: {[col[0] for col in columns_with_id]}")
     
@@ -66,6 +71,13 @@ def drop_table(metadata, table_name):
     
     # Удаляем таблицу из метаданных
     del metadata["tables"][table_name]
+    
+    # Удаляем файл с данными таблицы (если существует)
+    import os
+    filepath = f"data/{table_name}.json"
+    if os.path.exists(filepath):
+        os.remove(filepath)
+    
     print(f"Таблица '{table_name}' успешно удалена")
     
     # Если таблиц не осталось, удаляем пустой словарь tables
@@ -73,3 +85,169 @@ def drop_table(metadata, table_name):
         del metadata["tables"]
     
     return metadata
+
+
+def insert(metadata, table_name, values):
+    """
+    Вставляет новую запись в таблицу.
+    
+    Args:
+        metadata (dict): Метаданные базы данных
+        table_name (str): Имя таблицы
+        values (list): Значения для вставки
+        
+    Returns:
+        list: Обновленные данные таблицы или пустой список в случае ошибки
+    """
+    # Проверяем существование таблицы
+    if "tables" not in metadata or table_name not in metadata["tables"]:
+        print(f"Ошибка: Таблица '{table_name}' не существует")
+        return []
+    
+    table_info = metadata["tables"][table_name]
+    columns = table_info["columns"]
+    
+    # Проверяем количество значений (минус ID)
+    if len(values) != len(columns) - 1:
+        print(
+            f"Ошибка: Ожидалось {len(columns) - 1} значений, "
+            f"получено {len(values)}"
+        )
+        return []
+    
+    # Загружаем текущие данные таблицы
+    table_data = load_table_data(table_name)
+    
+    # Генерируем новый ID
+    if table_data:
+        new_id = max(row["ID"] for row in table_data) + 1
+    else:
+        new_id = 1
+    
+    # Создаем новую запись
+    new_row = {"ID": new_id}
+    
+    # Валидируем типы данных и добавляем значения
+    for i, (col_name, col_type) in enumerate(columns[1:], 1):
+        value = values[i - 1]
+        
+        # Валидация типов
+        try:
+            if col_type == "int":
+                validated_value = int(value)
+            elif col_type == "bool":
+                if isinstance(value, str):
+                    validated_value = value.lower() in ("true", "1", "yes")
+                else:
+                    validated_value = bool(value)
+            else:  # str
+                validated_value = str(value)
+        except (ValueError, TypeError):
+            print(
+                f"Ошибка: Неверный тип для столбца '{col_name}'. "
+                f"Ожидался {col_type}, получен {type(value).__name__}"
+            )
+            return []
+        
+        new_row[col_name] = validated_value
+    
+    # Добавляем запись и сохраняем
+    table_data.append(new_row)
+    save_table_data(table_name, table_data)
+    
+    print(f"Запись успешно добавлена в таблицу '{table_name}' (ID: {new_id})")
+    return table_data
+
+
+def select(table_data, where_clause=None):
+    """
+    Выбирает записи из данных таблицы.
+    
+    Args:
+        table_data (list): Данные таблицы
+        where_clause (dict): Условия фильтрации
+        
+    Returns:
+        list: Отфильтрованные данные
+    """
+    if where_clause is None:
+        return table_data
+    
+    # Фильтруем данные по условию
+    filtered_data = []
+    for row in table_data:
+        match = True
+        for key, value in where_clause.items():
+            if row.get(key) != value:
+                match = False
+                break
+        if match:
+            filtered_data.append(row)
+    
+    return filtered_data
+
+
+def update(table_data, set_clause, where_clause):
+    """
+    Обновляет записи в данных таблицы.
+    
+    Args:
+        table_data (list): Данные таблицы
+        set_clause (dict): Поля для обновления
+        where_clause (dict): Условия фильтрации
+        
+    Returns:
+        list: Обновленные данные таблицы
+    """
+    updated_count = 0
+    
+    for row in table_data:
+        match = True
+        for key, value in where_clause.items():
+            if row.get(key) != value:
+                match = False
+                break
+        
+        if match:
+            for key, value in set_clause.items():
+                if key in row and key != "ID":  # ID нельзя обновлять
+                    row[key] = value
+            updated_count += 1
+    
+    print(f"Обновлено записей: {updated_count}")
+    return table_data
+
+
+def delete(table_data, where_clause):
+    """
+    Удаляет записи из данных таблицы.
+    
+    Args:
+        table_data (list): Данные таблицы
+        where_clause (dict): Условия фильтрации
+        
+    Returns:
+        list: Обновленные данные таблицы
+    """
+    if where_clause is None:
+        print("Ошибка: Для удаления необходимо указать условие WHERE")
+        return table_data
+    
+    initial_count = len(table_data)
+    
+    # Фильтруем данные, исключая записи, соответствующие условию
+    filtered_data = []
+    for row in table_data:
+        match = True
+        for key, value in where_clause.items():
+            if row.get(key) != value:
+                match = False
+                break
+        
+        if not match:
+            filtered_data.append(row)
+    
+    deleted_count = initial_count - len(filtered_data)
+    print(f"Удалено записей: {deleted_count}")
+    
+    return filtered_data
