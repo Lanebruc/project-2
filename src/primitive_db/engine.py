@@ -4,6 +4,7 @@ import shlex
 from prettytable import PrettyTable
 
 from .core import create_table, delete, drop_table, insert, select, update
+from .decorators import handle_db_errors
 from .parser import parse_set_clause, parse_where_condition
 from .utils import load_metadata, load_table_data, save_metadata, save_table_data
 
@@ -53,7 +54,7 @@ def print_table_data(table_data, columns):
     
     print(table)
 
-
+@handle_db_errors
 def run():
     """Главная функция с основным циклом программы."""
     print("Добро пожаловать в примитивную базу данных!")

@@ -17,6 +17,14 @@
                 [
                     "salary",
                     "int"
+                ],
+                [
+                    "age",
+                    "int"
+                ],
+                [
+                    "active",
+                    "bool"
                 ]
             ],
             "data": []

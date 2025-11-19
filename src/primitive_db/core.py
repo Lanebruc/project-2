@@ -1,18 +1,12 @@
 # src/primitive_db/core.py
+from .decorators import cacher, confirm_action, handle_db_errors, log_time
 from .utils import load_table_data, save_table_data
 
 
+@handle_db_errors
 def create_table(metadata, table_name, columns):
     """
     Создает новую таблицу в метаданных.
-    
-    Args:
-        metadata (dict): Текущие метаданные базы данных
-        table_name (str): Имя создаваемой таблицы
-        columns (list): Список столбцов в формате [("column_name", "type"), ...]
-        
-    Returns:
-        dict: Обновленные метаданные или исходные метаданные в случае ошибки
     """
     # Проверяем, существует ли уже таблица с таким именем
     if "tables" in metadata and table_name in metadata["tables"]:
@@ -41,7 +35,7 @@ def create_table(metadata, table_name, columns):
     # Создаем запись о таблице
     metadata["tables"][table_name] = {
         "columns": columns_with_id,
-        "data": []  # Будущие данные таблицы
+        "data": []
     }
     
     # Создаем файл для данных таблицы
@@ -53,16 +47,11 @@ def create_table(metadata, table_name, columns):
     return metadata
 
 
+@handle_db_errors
+@confirm_action("удаление таблицы")
 def drop_table(metadata, table_name):
     """
     Удаляет таблицу из метаданных.
-    
-    Args:
-        metadata (dict): Текущие метаданные базы данных
-        table_name (str): Имя таблицы для удаления
-        
-    Returns:
-        dict: Обновленные метаданные или исходные метаданные в случае ошибки
     """
     # Проверяем существование таблицы
     if "tables" not in metadata or table_name not in metadata["tables"]:
@@ -87,17 +76,11 @@ def drop_table(metadata, table_name):
     return metadata
 
 
+@handle_db_errors
+@log_time
 def insert(metadata, table_name, values):
     """
     Вставляет новую запись в таблицу.
-    
-    Args:
-        metadata (dict): Метаданные базы данных
-        table_name (str): Имя таблицы
-        values (list): Значения для вставки
-        
-    Returns:
-        list: Обновленные данные таблицы или пустой список в случае ошибки
     """
     # Проверяем существование таблицы
     if "tables" not in metadata or table_name not in metadata["tables"]:
@@ -130,24 +113,15 @@ def insert(metadata, table_name, values):
     # Валидируем типы данных и добавляем значения
     for i, (col_name, col_type) in enumerate(columns[1:], 1):
         value = values[i - 1]
-        
-        # Валидация типов
-        try:
-            if col_type == "int":
-                validated_value = int(value)
-            elif col_type == "bool":
-                if isinstance(value, str):
-                    validated_value = value.lower() in ("true", "1", "yes")
-                else:
-                    validated_value = bool(value)
-            else:  # str
-                validated_value = str(value)
-        except (ValueError, TypeError):
-            print(
-                f"Ошибка: Неверный тип для столбца '{col_name}'. "
-                f"Ожидался {col_type}, получен {type(value).__name__}"
-            )
-            return []
+        if col_type == "int":
+            validated_value = int(value)
+        elif col_type == "bool":
+            if isinstance(value, str):
+                validated_value = value.lower() in ("true", "1", "yes")
+            else:
+                validated_value = bool(value)
+        else:  # str
+            validated_value = str(value)
         
         new_row[col_name] = validated_value
     
@@ -159,45 +133,43 @@ def insert(metadata, table_name, values):
     return table_data
 
 
+@handle_db_errors
+@log_time
 def select(table_data, where_clause=None):
     """
     Выбирает записи из данных таблицы.
-    
-    Args:
-        table_data (list): Данные таблицы
-        where_clause (dict): Условия фильтрации
-        
-    Returns:
-        list: Отфильтрованные данные
     """
     if where_clause is None:
         return table_data
     
-    # Фильтруем данные по условию
-    filtered_data = []
-    for row in table_data:
-        match = True
-        for key, value in where_clause.items():
-            if row.get(key) != value:
-                match = False
-                break
-        if match:
-            filtered_data.append(row)
+    # Создаем ключ для кэша на основе данных и условия
+    cache_key = (
+        "select_" 
+        + str(hash(str(table_data))) 
+        + "_" 
+        + str(hash(str(where_clause)))
+    )
     
-    return filtered_data
+    # Используем кэширование
+    def perform_select():
+        filtered_data = []
+        for row in table_data:
+            match = True
+            for key, value in where_clause.items():
+                if row.get(key) != value:
+                    match = False
+                    break
+            if match:
+                filtered_data.append(row)
+        return filtered_data
+    
+    return cacher(cache_key, perform_select)
 
 
+@handle_db_errors
 def update(table_data, set_clause, where_clause):
     """
     Обновляет записи в данных таблицы.
-    
-    Args:
-        table_data (list): Данные таблицы
-        set_clause (dict): Поля для обновления
-        where_clause (dict): Условия фильтрации
-        
-    Returns:
-        list: Обновленные данные таблицы
     """
     updated_count = 0
     
@@ -218,16 +190,11 @@ def update(table_data, set_clause, where_clause):
     return table_data
 
 
+@handle_db_errors
+@confirm_action("удаление записей")
 def delete(table_data, where_clause):
     """
     Удаляет записи из данных таблицы.
-    
-    Args:
-        table_data (list): Данные таблицы
-        where_clause (dict): Условия фильтрации
-        
-    Returns:
-        list: Обновленные данные таблицы
     """
     if where_clause is None:
         print("Ошибка: Для удаления необходимо указать условие WHERE")
